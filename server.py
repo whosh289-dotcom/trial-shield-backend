@@ -10,7 +10,7 @@ import time
 from database import (
     get_active_trials, get_all_trials, defuse_trial,
     get_all_settings, set_setting, get_recent_logs,
-    delete_trial
+    delete_trial, add_trial
 )
 from scanner import process_raw_email, scan_imap
 from nag_engine import nag_engine, calculate_nag_parameters
@@ -192,6 +192,28 @@ class TrialShieldHandler(http.server.SimpleHTTPRequestHandler):
             body = payload.get("body", "")
             result = process_raw_email(from_h, subject, body)
             self._send_json(result)
+            return
+
+        elif path == "/api/trials":
+            service_name = payload.get("service_name")
+            trial_end_date = payload.get("trial_end_date")
+            cost = payload.get("cost", "Unknown")
+            cancel_url = payload.get("cancel_url", "")
+            
+            if not service_name or not trial_end_date:
+                self._send_json({"error": "service_name and trial_end_date are required"}, status=400)
+                return
+                
+            trial_id = add_trial(
+                service_name=service_name,
+                sender_email="Manual Entry",
+                subject="Manual Entry",
+                trial_end_date=trial_end_date,
+                cost=cost,
+                cancel_url=cancel_url,
+                raw_snippet="Added manually via frontend"
+            )
+            self._send_json({"success": True, "trial_id": trial_id})
             return
 
         elif path == "/api/trials/nag":

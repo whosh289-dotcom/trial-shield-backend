@@ -5,7 +5,7 @@ import time
 from database import get_active_trials, get_all_trials, get_recent_logs, defuse_trial
 from scanner import process_raw_email
 from nag_engine import nag_engine, calculate_nag_parameters
-from notifier import browser_alert_queue
+from notifier import browser_alert_queue, send_macos_notification, send_voice_alert
 
 def print_banner():
     print("""

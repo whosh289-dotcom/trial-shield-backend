@@ -2,6 +2,7 @@ import unittest
 import os
 import tempfile
 import json
+import io
 import threading
 import urllib.request
 import urllib.parse
@@ -194,6 +195,22 @@ class TestNagEngine(unittest.TestCase):
         self.assertEqual(interval, 720)
 
 
+class MockSocket:
+    def __init__(self, raw_http):
+        self.rfile = io.BytesIO(raw_http)
+        self.wfile = io.BytesIO()
+    def makefile(self, mode, *args, **kwargs):
+        if 'r' in mode:
+            return self.rfile
+        return self.wfile
+    def sendall(self, data):
+        self.wfile.write(data)
+
+class DummyServer:
+    def __init__(self):
+        self.server_name = 'localhost'
+        self.server_port = 5055
+
 class TestServerEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -202,38 +219,37 @@ class TestServerEndpoints(unittest.TestCase):
         database.DB_PATH = cls.temp_db.name
         database.init_db()
 
-        # Start test server on ephemeral port
-        server.ThreadingSimpleServer.allow_reuse_address = True
-        cls.httpd = server.ThreadingSimpleServer(("127.0.0.1", 0), server.TrialShieldHandler)
-        cls.port = cls.httpd.server_address[1]
-        cls.server_thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
-        cls.server_thread.start()
-
     @classmethod
     def tearDownClass(cls):
-        cls.httpd.shutdown()
-        cls.httpd.server_close()
         if os.path.exists(cls.temp_db.name):
             os.remove(cls.temp_db.name)
 
-    def _url(self, path):
-        return f"http://127.0.0.1:{self.port}{path}"
+    def _request(self, method, path, data=None):
+        body_bytes = json.dumps(data).encode("utf-8") if data is not None else b""
+        req_lines = [f"{method} {path} HTTP/1.1", "Host: localhost"]
+        if data is not None:
+            req_lines.append("Content-Type: application/json")
+            req_lines.append(f"Content-Length: {len(body_bytes)}")
+        raw = ("\r\n".join(req_lines) + "\r\n\r\n").encode("utf-8") + body_bytes
+        sock = MockSocket(raw)
+        server.TrialShieldHandler(sock, ("127.0.0.1", 12345), DummyServer())
+        
+        response_bytes = sock.wfile.getvalue()
+        header_part, _, body_part = response_bytes.partition(b"\r\n\r\n")
+        lines = header_part.decode("utf-8", errors="replace").split("\r\n")
+        status_line = lines[0]
+        status_code = int(status_line.split()[1]) if len(status_line.split()) > 1 else 500
+        parsed_body = json.loads(body_part.decode("utf-8")) if body_part else {}
+        return status_code, parsed_body
 
     def _get(self, path):
-        req = urllib.request.Request(self._url(path))
-        with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
+        return self._request("GET", path)
 
     def _post(self, path, data):
-        body = json.dumps(data).encode("utf-8")
-        req = urllib.request.Request(self._url(path), data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
+        return self._request("POST", path, data)
 
     def _delete(self, path):
-        req = urllib.request.Request(self._url(path), method="DELETE")
-        with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
+        return self._request("DELETE", path)
 
     def test_get_trials(self):
         status, data = self._get("/api/trials")
@@ -297,12 +313,15 @@ class TestServerEndpoints(unittest.TestCase):
             "cost": "$12.99/mo",
             "cancel_url": "https://canva.com/cancel"
         }
-        try:
-            status, res = self._post("/api/trials", payload)
-            self.assertEqual(status, 200)
-            self.assertTrue(res.get("success"))
-        except urllib.error.HTTPError as e:
-            self.fail(f"POST /api/trials failed with HTTP {e.code}: {e.read().decode('utf-8')}")
+        status, res = self._post("/api/trials", payload)
+        self.assertEqual(status, 200)
+        self.assertTrue(res.get("success"))
+
+class TestCLI(unittest.TestCase):
+    def test_cli_alert_function(self):
+        import cli
+        # test_alert should execute without raising NameError or exception
+        cli.test_alert()
 
 if __name__ == "__main__":
     unittest.main()

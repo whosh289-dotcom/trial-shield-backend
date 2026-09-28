@@ -5,6 +5,13 @@ from database import log_nag
 
 logger = logging.getLogger("Notifier")
 
+import os
+
+def send_macos_notification(title, message, sound="Basso"):
+    os.system(f"""osascript -e 'display notification "{message}" with title "{title}" sound name "{sound}"'""")
+
+def send_voice_alert(message):
+    os.system(f"""say "{message}" """)
 # Global queue for Server-Sent Events (SSE) to the browser
 browser_alert_queue = queue.Queue()
 
